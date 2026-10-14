@@ -17,7 +17,7 @@ Flashing firmware keeps the meter's pairing, so you don't need to pair again.
 
 ## Option A: web installer (easiest)
 
-Open the project's GitHub Pages site in Chrome or Edge, click **Install**,
+Open <https://rockin-rolla-ryno.github.io/openrouter-meter/> in Chrome or Edge, click **Install**,
 choose the *USB JTAG/serial debug unit* port. The page writes
 `openrouter-meter-firmware.bin` at offset 0.
 

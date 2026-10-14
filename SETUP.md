@@ -33,8 +33,8 @@ The display needs the OpenRouter Meter software installed on it. The easiest
 way is from your web browser.
 
 1. Open **Google Chrome** or **Microsoft Edge** (other browsers can't do this)
-   and go to the **web installer**: `https://<your-github-name>.github.io/openrouter-meter/`
-   *(the link is also on the project's GitHub page)*.
+   and go to the **web installer**:
+   **<https://rockin-rolla-ryno.github.io/openrouter-meter/>**
 2. Put the display into **install mode**:
    1. Unplug the USB cable from the display.
    2. Find the small **BOOT** button on the side of the display and **press and hold it**.
@@ -55,7 +55,8 @@ The display now shows a glowing circle and **"Ready to pair"**. 🎉
 
 ## Step 3 — Install the app on your PC
 
-1. Download **`OpenRouterMeter.exe`** from the project's **Releases** page on GitHub.
+1. Download **`OpenRouterMeter.exe`** from the
+   **[latest release](https://github.com/rockin-rolla-ryno/openrouter-meter/releases/latest)**.
 2. **Double-click** it.
    - If Windows shows *"Windows protected your PC"*, click **More info** →
      **Run anyway**. (This appears for any new app that isn't from a big
@@ -163,5 +164,5 @@ Right-click the tray icon → *Uninstall…*. Optionally remove the display from
 `%APPDATA%\OpenRouterMeter` (your settings).
 
 **Still stuck?** Right-click the tray icon → *Open log*, and include that file
-(it never contains your key) when you ask for help on the project's GitHub
-Issues page.
+(it never contains your key) when you ask for help on the project's
+[Issues page](https://github.com/rockin-rolla-ryno/openrouter-meter/issues).
