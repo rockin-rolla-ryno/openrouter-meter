@@ -28,6 +28,22 @@ enum UserEvent {
 
 fn main() {
     let exe = std::env::current_exe().unwrap_or_default();
+    // Scriptable autostart control (for installers / support):
+    //   OpenRouterMeter.exe --enable-autostart | --disable-autostart
+    #[cfg(windows)]
+    for (flag, on) in [("--enable-autostart", true), ("--disable-autostart", false)] {
+        if std::env::args().any(|a| a == flag) {
+            let target = if system::install_path().exists() { system::install_path() } else { exe.clone() };
+            match system::set_autostart(on, &target) {
+                Ok(()) => log!("autostart {} via {flag}", if on { "enabled" } else { "disabled" }),
+                Err(e) => {
+                    log!("{flag} failed: {e}");
+                    std::process::exit(1);
+                }
+            }
+            return;
+        }
+    }
     if std::env::args().any(|a| a == "--once") {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
         if let Err(e) = rt.block_on(worker::poll_once()) {
@@ -45,15 +61,35 @@ fn main() {
         return;
     }
 
+    let from_task = std::env::args().any(|a| a == system::AUTOSTART_ARG);
     #[cfg(windows)]
     if !system::claim_single_instance() {
-        system::message(APP, "OpenRouter Meter is already running.\n\nLook for its icon near the clock (you may need to click the ^ arrow).", false);
+        // The scheduled task re-checks every few minutes; stay quiet then.
+        if !from_task {
+            system::message(APP, "OpenRouter Meter is already running.\n\nLook for its icon near the clock (you may need to click the ^ arrow).", false);
+        }
         return;
+    }
+
+    // Self-healing: a crash anywhere is logged and ends the process with a
+    // failure code, so the scheduled task restarts it (instead of leaving a
+    // tray icon with a dead worker behind).
+    std::panic::set_hook(Box::new(|info| {
+        log!("fatal: {info}");
+        std::process::exit(3);
+    }));
+    #[cfg(windows)]
+    if let Err(e) = system::migrate_autostart(&exe) {
+        log!("autostart migration: {e}");
     }
 
     let settings_path = config::settings_path();
     let first_run = config::ensure_file(&settings_path).unwrap_or(false);
-    log!("OpenRouter Meter {} starting", env!("CARGO_PKG_VERSION"));
+    log!(
+        "OpenRouter Meter {} starting{}",
+        env!("CARGO_PKG_VERSION"),
+        if from_task { " (Task Scheduler)" } else { "" }
+    );
     if first_run {
         #[cfg(windows)]
         let _ = system::set_autostart(true, &exe);
@@ -100,6 +136,7 @@ fn main() {
     let autostart_on = false;
     let autostart_item = CheckMenuItem::new("Start with Windows", true, autostart_on, None);
     let log_item = MenuItem::new("Open log", true, None);
+    let repair_item = MenuItem::new("Re-pair meter\u{2026}", true, None);
     let about_item = MenuItem::new("About", true, None);
     let uninstall_item = MenuItem::new("Uninstall\u{2026}", true, None);
     let quit_item = MenuItem::new("Quit", true, None);
@@ -114,6 +151,7 @@ fn main() {
         &key_item,
         &autostart_item,
         &log_item,
+        &repair_item,
         &PredefinedMenuItem::separator(),
         &about_item,
         &uninstall_item,
@@ -173,6 +211,30 @@ fn main() {
                             log!("autostart: {e}");
                         }
                     }
+                } else if id == *repair_item.id() {
+                    #[cfg(windows)]
+                    {
+                        let settings = config::load();
+                        match worker::pinned_address(&settings) {
+                            Some(addr) if system::message(
+                                APP,
+                                "Forget this PC's pairing with your meter and pair again?\n\n\
+                                 First hold the meter's PWR button for 3 seconds and let go \
+                                 (it shows \"Release to pair\" / \"Ready to pair\"), then click Yes.",
+                                true,
+                            ) => {
+                                if let Err(e) = system::unpair(addr) {
+                                    log!("re-pair: {e}");
+                                }
+                                log!("re-pair requested by user");
+                                let _ = cmd_tx.send(Command::RefreshNow);
+                            }
+                            None => {
+                                system::message(APP, "No meter is paired yet \u{2014} the app pairs automatically when it finds one.", false);
+                            }
+                            _ => {}
+                        }
+                    }
                 } else if id == *log_item.id() {
                     system::open_in_notepad(&logging::log_path());
                 } else if id == *about_item.id() {
@@ -209,11 +271,12 @@ fn describe(s: &State) -> (&'static str, [u8; 3]) {
         State::Live => ("Live \u{2014} meter connected", art::MINT),
         State::Searching => ("Looking for your meter\u{2026}", art::AMBER),
         State::Pairing => ("Pairing with your meter\u{2026}", art::AMBER),
-        State::NeedsPairing => ("Pairing needed: hold the meter's PWR button 3 s, then release", art::AMBER),
+        State::NeedsPairing => ("Pairing needed: choose \"Re-pair meter\" below", art::AMBER),
         State::NeedsKey => ("Add your OpenRouter key in Settings", art::AMBER),
         State::KeyRejected => ("OpenRouter rejected the key \u{2014} check Settings", art::CORAL),
         State::NoBluetooth => ("Bluetooth is off or missing", art::CORAL),
         State::ApiOffline(_) => ("Can't reach OpenRouter \u{2014} retrying", art::AMBER),
+        State::WrongDevice(_) => ("Paired device isn't running OpenRouter Meter firmware", art::CORAL),
     }
 }
 

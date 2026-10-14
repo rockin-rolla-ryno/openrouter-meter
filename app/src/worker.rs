@@ -18,6 +18,7 @@ pub enum State {
     Searching,
     Pairing,
     NeedsPairing,
+    WrongDevice(String),
     ApiOffline(String),
     Live,
 }
@@ -63,9 +64,10 @@ pub async fn run(report: impl Fn(Status) + Send + 'static, mut commands: mpsc::U
                     link_backoff = Duration::from_secs(2);
                 }
                 Err(e) => {
-                    let state = match e {
+                    let state = match &e {
                         LinkError::NoAdapter => State::NoBluetooth,
                         LinkError::NeedsPairing => State::NeedsPairing,
+                        LinkError::NotOurs(a) => State::WrongDevice(a.clone()),
                         _ => State::Searching,
                     };
                     if !matches!(e, LinkError::NotFound) {
@@ -152,7 +154,7 @@ async fn connect(
     report: &(impl Fn(Status) + Send),
     summary: &Option<String>,
 ) -> Result<Meter, LinkError> {
-    let saved = settings.meter_address.as_deref().and_then(system::parse_address);
+    let saved = pinned_address(settings);
     let addr = tokio::task::spawn_blocking(move || link::locate(saved))
         .await
         .map_err(|e| LinkError::Other(e.to_string()))??;
@@ -175,23 +177,20 @@ async fn connect(
     let r = refresh.clone();
     match tokio::task::spawn_blocking(move || link::open(addr, r)).await {
         Ok(Ok(m)) => Ok(m),
-        Ok(Err(LinkError::NeedsPairing)) => {
-            // Windows thinks it's paired but the meter doesn't (e.g. the meter
-            // was reset): pair afresh once, then retry.
-            log!("meter refused the existing pairing; re-pairing");
-            report(Status { state: State::Pairing, summary: summary.clone() });
-            let _ = tokio::task::spawn_blocking(move || system::unpair(addr)).await;
-            tokio::time::sleep(Duration::from_millis(800)).await;
-            match tokio::task::spawn_blocking(move || system::pair(addr)).await {
-                Ok(Ok(true)) => tokio::task::spawn_blocking(move || link::open(addr, refresh))
-                    .await
-                    .map_err(|e| LinkError::Other(e.to_string()))?,
-                _ => Err(LinkError::NeedsPairing),
-            }
-        }
+        // A refused pairing is reported, never "fixed" by unpairing on our own:
+        // the user can choose "Re-pair meter" in the tray menu.
         Ok(Err(e)) => Err(e),
         Err(e) => Err(LinkError::Other(e.to_string())),
     }
+}
+
+/// The meter this app is bound to: OPENROUTER_BLE_ADDRESS (env) wins over
+/// meter_address in settings.txt. None = not paired with a meter yet.
+pub fn pinned_address(settings: &config::Settings) -> Option<u64> {
+    std::env::var("OPENROUTER_BLE_ADDRESS")
+        .ok()
+        .and_then(|v| system::parse_address(&v))
+        .or_else(|| settings.meter_address.as_deref().and_then(system::parse_address))
 }
 
 /// One OpenRouter poll -> the meter messages + a one-line tray summary.

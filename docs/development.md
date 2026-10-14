@@ -80,8 +80,30 @@ Useful flags:
 
 - `OpenRouterMeter.exe --once`: polls OpenRouter once and writes the messages it
   would send to `%APPDATA%\OpenRouterMeter\last_poll.json`, without Bluetooth.
+- `OpenRouterMeter.exe --enable-autostart` / `--disable-autostart`: register
+  or remove the start-at-sign-in task (same as the tray's *Start with Windows*).
 - `OPENROUTER_MANAGEMENT_KEY` environment variable: overrides the key in
   settings.txt.
+- `OPENROUTER_BLE_ADDRESS` environment variable: pins the meter's Bluetooth
+  address and takes priority over `meter_address` in settings.txt.
+
+### Autostart and recovery
+
+Autostart is a per-user Task Scheduler task named **OpenRouterMeter**. It needs
+no admin rights. The task runs `OpenRouterMeter.exe --autostart` 30 s after
+sign-in, with no time limit and on battery. If the app fails it restarts it up
+to 3 times, 1 minute apart, and the trigger repeats every 5 minutes; a second
+copy exits silently because only one instance can hold the lock. Older
+installs used an `HKCU\…\Run` value, which is removed and migrated on start.
+*Uninstall* deletes the task.
+
+The app doesn't give up on its own. API and Bluetooth errors are logged and
+retried with backoff (2 s up to 30 s, forever), including while the Bluetooth
+adapter isn't ready yet. Pinning is strict: once `meter_address` (or
+`OPENROUTER_BLE_ADDRESS`) is set, no other device is ever tried. A device is
+only written to after its OpenRouter Meter service and DATA characteristic have
+been found. The app never removes a pairing by itself; that only happens from
+*Re-pair meter…*.
 
 Files the app writes to `%APPDATA%\OpenRouterMeter\`: `settings.txt`,
 `meter.log` (rotated at 1 MB, never contains the key), `day_state.json`,
@@ -89,7 +111,13 @@ Files the app writes to `%APPDATA%\OpenRouterMeter\`: `settings.txt`,
 
 ## Releasing
 
-Push a tag like `v1.0.0`. The **Release** workflow builds the firmware and the
+Without GitHub Actions, build both files locally and publish by hand:
+
+```bash
+gh release create v1.0.1 app/target/release/OpenRouterMeter.exe openrouter-meter-firmware.bin --title v1.0.1 --notes "..."
+```
+
+With Actions enabled, push a tag like `v1.0.0` instead. The **Release** workflow builds the firmware and the
 app, attaches `OpenRouterMeter.exe` and `openrouter-meter-firmware.bin` to a
 GitHub Release, and publishes the web installer (with that firmware) to
 GitHub Pages. Enable Pages once under *Settings → Pages → Source: GitHub

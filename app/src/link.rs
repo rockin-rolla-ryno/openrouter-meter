@@ -1,10 +1,15 @@
 //! Bluetooth LE link to the meter, using Windows' own Bluetooth APIs (WinRT).
 //!
-//! Finding the meter:
-//!   1. the address remembered in settings.txt, else
-//!   2. any meter already paired with Windows (works even while Windows holds
-//!      the connection and the meter has stopped advertising), else
-//!   3. a meter advertising nearby (first-time setup).
+//! Finding the meter — strictly OpenRouter Meters, never another device:
+//!   1. a pinned address (OPENROUTER_BLE_ADDRESS, else meter_address in
+//!      settings.txt). Once pinned, ONLY that device is ever used; if it is
+//!      missing we keep retrying rather than fall back to anything else.
+//!   2. unpinned (first run): a paired device named "OpenRouter Meter" that
+//!      proves it exposes the OpenRouter Meter service, else
+//!   3. a device advertising the OpenRouter Meter service UUID.
+//! A device is only written to after its OpenRouter Meter service and data
+//! characteristic have been found, so other gadgets (e.g. a Clawdmeter on the
+//! same PC) can never receive our data. Nothing is ever unpaired automatically.
 //! GATT lookups are uncached, so a firmware update never leaves Windows with
 //! a stale view of the meter. The session is kept alive by Windows
 //! (MaintainConnection), which also reconnects after the meter sleeps.
@@ -33,6 +38,8 @@ pub enum LinkError {
     NoAdapter,
     NotFound,
     NeedsPairing,
+    /// The pinned device answers but isn't running OpenRouter Meter firmware.
+    NotOurs(String),
     Other(String),
 }
 
@@ -42,6 +49,7 @@ impl std::fmt::Display for LinkError {
             LinkError::NoAdapter => write!(f, "no Bluetooth adapter (is Bluetooth turned on?)"),
             LinkError::NotFound => write!(f, "meter not found nearby"),
             LinkError::NeedsPairing => write!(f, "meter needs pairing"),
+            LinkError::NotOurs(a) => write!(f, "device {a} is not running OpenRouter Meter firmware"),
             LinkError::Other(e) => write!(f, "{e}"),
         }
     }
@@ -163,26 +171,20 @@ pub fn locate(saved: Option<u64>) -> Result<u64, LinkError> {
         return Err(LinkError::NoAdapter);
     }
     if let Some(a) = saved {
-        return Ok(a);
+        return Ok(a); // pinned: never look at any other device
     }
-    let mut dropped_stale = false;
     for a in paired_candidates() {
         let Ok(dev) = BluetoothLEDevice::FromBluetoothAddressAsync(a).and_then(|op| op.join()) else { continue };
         match probe(&dev) {
             Probe::Meter => return Ok(a),
             Probe::Unreachable => {}
-            Probe::Stale => {
-                // A pairing from older firmware: forget it so the meter starts
-                // advertising again, then pair afresh below.
-                log!("dropping stale pairing for {}", format_address(a));
-                drop(dev);
-                let _ = crate::system::unpair(a);
-                dropped_stale = true;
-            }
+            // Named like a meter but not speaking our protocol (other firmware,
+            // or a pairing from old firmware). Leave it alone — the user can
+            // use "Re-pair meter" from the tray if it really is theirs.
+            Probe::Stale => log!("skipping {}: no OpenRouter Meter service", format_address(a)),
         }
     }
-    let wait = if dropped_stale { 20 } else { 8 };
-    scan_for_meter(Duration::from_secs(wait)).ok_or(LinkError::NotFound)
+    scan_for_meter(Duration::from_secs(8)).ok_or(LinkError::NotFound)
 }
 
 /// Open the GATT session and characteristics (blocking). Refresh requests
@@ -191,16 +193,6 @@ pub fn open(address: u64, refresh: mpsc::UnboundedSender<()>) -> Result<Meter, L
     let device = BluetoothLEDevice::FromBluetoothAddressAsync(address)
         .and_then(|op| op.join())
         .map_err(|_| LinkError::NotFound)?;
-    // Keep the link up; Windows reconnects by itself after drop-outs.
-    let session = device
-        .BluetoothDeviceId()
-        .and_then(|id| GattSession::FromDeviceIdAsync(&id))
-        .and_then(|op| op.join())
-        .ok();
-    if let Some(s) = &session {
-        let _ = s.SetMaintainConnection(true);
-    }
-
     let started = Instant::now();
     let services = loop {
         let r = device
@@ -211,6 +203,10 @@ pub fn open(address: u64, refresh: mpsc::UnboundedSender<()>) -> Result<Meter, L
         let list = r.Services().map_err(other)?;
         if st == GattCommunicationStatus::Success && list.Size().unwrap_or(0) > 0 {
             break list;
+        }
+        if st == GattCommunicationStatus::Success {
+            // Reachable, but no OpenRouter Meter service: wrong device/firmware.
+            return Err(LinkError::NotOurs(format_address(address)));
         }
         if st == GattCommunicationStatus::AccessDenied || st == GattCommunicationStatus::ProtocolError {
             return Err(LinkError::NeedsPairing);
@@ -233,7 +229,7 @@ pub fn open(address: u64, refresh: mpsc::UnboundedSender<()>) -> Result<Meter, L
         let list = r.Characteristics().map_err(other)?;
         Ok(if list.Size().unwrap_or(0) > 0 { list.GetAt(0).ok() } else { None })
     };
-    let data = char_of(ids::DATA)?.ok_or_else(|| LinkError::Other("meter has no data characteristic (old firmware?)".into()))?;
+    let data = char_of(ids::DATA)?.ok_or_else(|| LinkError::NotOurs(format_address(address)))?;
     let request = char_of(ids::REQUEST)?;
     if let Some(req) = &request {
         let handler = TypedEventHandler::<GattCharacteristic, GattValueChangedEventArgs>::new(move |_, _| {
@@ -252,6 +248,16 @@ pub fn open(address: u64, refresh: mpsc::UnboundedSender<()>) -> Result<Meter, L
             Ok(s) => log!("subscribe status {:?}", s.0),
             Err(e) => log!("subscribe: {e}"),
         }
+    }
+    // Only now that it's proven to be an OpenRouter Meter do we ask Windows to
+    // keep the link up (and reconnect by itself after drop-outs).
+    let session = device
+        .BluetoothDeviceId()
+        .and_then(|id| GattSession::FromDeviceIdAsync(&id))
+        .and_then(|op| op.join())
+        .ok();
+    if let Some(s) = &session {
+        let _ = s.SetMaintainConnection(true);
     }
     Ok(Meter {
         address: format_address(address),

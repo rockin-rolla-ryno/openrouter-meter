@@ -70,7 +70,8 @@ The display now shows a glowing circle and **"Ready to pair"**. 🎉
    with your settings.
 
 That's it for installing — the app copies itself to the right place and will
-start automatically whenever Windows starts. You can delete the downloaded file.
+start automatically about 30 seconds after you sign in to Windows (and restarts
+itself if it ever stops). You can delete the downloaded file.
 
 ---
 
@@ -144,8 +145,24 @@ downloaded file again).
 
 **The tray icon says "Pairing needed"**
 The display only accepts a new PC when you allow it. Hold the display's **PWR**
-button for **3 seconds** and let go — it shows *"Ready to pair"* — then wait a
-few seconds; the app pairs by itself.
+button for **3 seconds** and let go — it shows *"Ready to pair"* — then
+right-click the tray icon → **Re-pair meter…** and click **Yes**. The app pairs
+again within a few seconds.
+
+**The tray icon says "Paired device isn't running OpenRouter Meter firmware"**
+The app is pinned to a Bluetooth device that doesn't have this software on it
+(for example another gadget that was paired first). The app never writes to a
+device like that. Either install the firmware on that display (step 2), or
+clear the `meter_address =` line in *Settings…* so the app looks for a real
+OpenRouter Meter again.
+
+**Two meters (or another Bluetooth gadget) on one PC**
+The first time it connects, the app writes the meter's Bluetooth address to the
+`meter_address` line in Settings. From then on it only ever talks to that one
+device, and if it's switched off the app keeps waiting for it rather than
+trying anything else. To choose the device yourself, put its address there
+(for example `meter_address = D4:05:92:B6:A4:9E`), or set the environment
+variable `OPENROUTER_BLE_ADDRESS`, which takes priority.
 
 **The display says "Check your OpenRouter key"**
 The key is missing, mistyped, or it's a normal API key instead of a

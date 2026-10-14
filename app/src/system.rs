@@ -136,8 +136,111 @@ pub fn windows_uses_24h() -> bool {
         .unwrap_or(true)
 }
 
+// ---------------------------------------------------------------------------
+// Start with Windows: a per-user Task Scheduler task (no admin needed).
+//
+// The old HKCU\...\Run entry only fires on a fresh interactive logon and is
+// skipped by some Fast Startup / resume paths. The task instead:
+//   - starts 30 s after sign-in (lets the Bluetooth stack and login settle),
+//   - re-checks every 5 minutes and relaunches the app if it isn't running
+//     (MultipleInstancesPolicy=IgnoreNew makes this free while it runs),
+//   - restarts on failure (3 tries, 1 minute apart),
+//   - runs on battery and has no execution time limit.
+// ---------------------------------------------------------------------------
+pub const TASK_NAME: &str = "OpenRouterMeter";
+pub const AUTOSTART_ARG: &str = "--autostart";
+
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+/// The task definition (Task Scheduler schema 1.4).
+pub fn task_xml(exe: &Path, user: &str) -> String {
+    let exe = xml_escape(&exe.display().to_string());
+    let user = xml_escape(user);
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Starts the OpenRouter Meter app when you sign in and keeps it running.</Description>
+    <URI>\{TASK_NAME}</URI>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <UserId>{user}</UserId>
+      <Delay>PT30S</Delay>
+      <Repetition>
+        <Interval>PT5M</Interval>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>{user}</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>6</Priority>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>3</Count>
+    </RestartOnFailure>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>"{exe}"</Command>
+      <Arguments>{AUTOSTART_ARG}</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"#
+    )
+}
+
+#[cfg(windows)]
+fn schtasks(args: &[&str]) -> std::io::Result<std::process::Output> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    std::process::Command::new("schtasks.exe").args(args).creation_flags(CREATE_NO_WINDOW).output()
+}
+
+#[cfg(windows)]
+fn current_user() -> String {
+    let user = std::env::var("USERNAME").unwrap_or_default();
+    match std::env::var("USERDOMAIN") {
+        Ok(d) if !d.is_empty() => format!("{d}\\{user}"),
+        _ => user,
+    }
+}
+
 #[cfg(windows)]
 pub fn autostart_enabled() -> bool {
+    schtasks(&["/Query", "/TN", TASK_NAME]).map(|o| o.status.success()).unwrap_or(false)
+}
+
+/// Legacy HKCU\...\Run entry written by earlier versions.
+#[cfg(windows)]
+fn legacy_run_entry() -> bool {
     use winreg::{enums::HKEY_CURRENT_USER, RegKey};
     RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey(RUN_KEY)
@@ -146,16 +249,53 @@ pub fn autostart_enabled() -> bool {
 }
 
 #[cfg(windows)]
-pub fn set_autostart(on: bool, exe: &Path) -> std::io::Result<()> {
+fn remove_legacy_run_entry() {
     use winreg::{enums::*, RegKey};
-    let (key, _) = RegKey::predef(HKEY_CURRENT_USER).create_subkey(RUN_KEY)?;
-    if on {
-        key.set_value(RUN_VALUE, &format!("\"{}\"", exe.display()))
-    } else {
-        match key.delete_value(RUN_VALUE) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-            _ => Ok(()),
+    if let Ok(key) = RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(RUN_KEY, KEY_SET_VALUE) {
+        let _ = key.delete_value(RUN_VALUE);
+    }
+}
+
+#[cfg(windows)]
+pub fn set_autostart(on: bool, exe: &Path) -> std::io::Result<()> {
+    remove_legacy_run_entry();
+    if !on {
+        if autostart_enabled() {
+            let out = schtasks(&["/Delete", "/TN", TASK_NAME, "/F"])?;
+            if !out.status.success() {
+                return Err(std::io::Error::other(String::from_utf8_lossy(&out.stderr).trim().to_string()));
+            }
         }
+        return Ok(());
+    }
+    // schtasks wants the XML as UTF-16 (with BOM).
+    let xml = task_xml(exe, &current_user());
+    let mut bytes = vec![0xFF, 0xFE];
+    for u in xml.encode_utf16() {
+        bytes.extend_from_slice(&u.to_le_bytes());
+    }
+    let file = std::env::temp_dir().join("OpenRouterMeter-task.xml");
+    std::fs::write(&file, bytes)?;
+    let path = file.display().to_string();
+    let out = schtasks(&["/Create", "/TN", TASK_NAME, "/XML", &path, "/F"]);
+    let _ = std::fs::remove_file(&file);
+    let out = out?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(String::from_utf8_lossy(&out.stderr).trim().to_string()))
+    }
+}
+
+/// Bring autostart up to date at launch: an old Run-key entry becomes the
+/// scheduled task, and an existing task is refreshed to point at this exe.
+/// Never turns autostart on if the user (or an admin) turned it off.
+#[cfg(windows)]
+pub fn migrate_autostart(exe: &Path) -> std::io::Result<()> {
+    if legacy_run_entry() || autostart_enabled() {
+        set_autostart(true, exe)
+    } else {
+        Ok(())
     }
 }
 
@@ -178,4 +318,33 @@ pub fn open_in_notepad(path: &Path) {
 
 pub fn open_url(url: &str) {
     let _ = std::process::Command::new("explorer.exe").arg(url).spawn();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_definition_has_the_reliability_settings() {
+        let x = task_xml(Path::new(r"C:\Users\a&b\OpenRouterMeter.exe"), r"PC\ryan");
+        for needle in [
+            "<LogonTrigger>", "<UserId>PC\\ryan</UserId>", "<Delay>PT30S</Delay>",
+            "<Interval>PT5M</Interval>", "<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>",
+            "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>",
+            "<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>",
+            "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>",
+            "<Interval>PT1M</Interval>", "<Count>3</Count>",
+            "<LogonType>InteractiveToken</LogonType>", "<RunLevel>LeastPrivilege</RunLevel>",
+            "a&amp;b", "<Arguments>--autostart</Arguments>",
+        ] {
+            assert!(x.contains(needle), "missing {needle}");
+        }
+    }
+
+    #[test]
+    fn addresses_parse() {
+        assert_eq!(parse_address("D4:05:92:B6:A4:9E"), Some(0xD40592B6A49E));
+        assert_eq!(parse_address("d40592b6a49e"), Some(0xD40592B6A49E));
+        assert_eq!(parse_address("nope"), None);
+    }
 }
