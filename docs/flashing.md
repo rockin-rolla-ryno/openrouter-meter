@@ -15,11 +15,16 @@ then press **PWR** briefly (on).
 
 Flashing firmware keeps the meter's pairing, so you don't need to pair again.
 
-## Option A: web installer (easiest)
+## Option A: in the browser (easiest)
 
-Open <https://rockin-rolla-ryno.github.io/openrouter-meter/> in Chrome or Edge, click **Install**,
-choose the *USB JTAG/serial debug unit* port. The page writes
-`openrouter-meter-firmware.bin` at offset 0.
+Download `openrouter-meter-firmware.bin` from the
+[latest release](https://github.com/rockin-rolla-ryno/openrouter-meter/releases/latest),
+open Espressif's web flasher <https://espressif.github.io/esptool-js/> in
+Chrome or Edge, click **Connect**, choose the *USB JTAG/serial debug unit* port,
+add the file at flash address `0x0` and click **Program**.
+
+(`docs/flasher/` also contains a one-click ESP Web Tools page for anyone who
+hosts it on GitHub Pages.)
 
 ## Option B: PlatformIO (from source)
 

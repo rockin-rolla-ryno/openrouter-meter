@@ -29,22 +29,27 @@ that: it can see your balance and usage but **cannot spend your credits**.
 
 ## Step 2 — Put the meter software on the display (one time)
 
-The display needs the OpenRouter Meter software installed on it. The easiest
-way is from your web browser.
+The display needs the OpenRouter Meter software installed on it. You do this
+from your web browser with the free flashing tool made by Espressif (the
+company that makes the display's chip).
 
-1. Open **Google Chrome** or **Microsoft Edge** (other browsers can't do this)
-   and go to the **web installer**:
-   **<https://rockin-rolla-ryno.github.io/openrouter-meter/>**
-2. Put the display into **install mode**:
+1. **Download the software:** from the
+   **[latest release](https://github.com/rockin-rolla-ryno/openrouter-meter/releases/latest)**,
+   save **`openrouter-meter-firmware.bin`** to your Downloads folder.
+2. **Put the display into install mode:**
    1. Unplug the USB cable from the display.
    2. Find the small **BOOT** button on the side of the display and **press and hold it**.
    3. While still holding BOOT, **plug the USB cable back in** (other end in your PC).
    4. Keep holding for about **3 seconds**, then let go. The screen stays black —
       that's correct.
-3. On the web page click **Install**, pick the port that appears (it's usually
-   called *"USB JTAG/serial debug unit"*), and click **Connect**, then **Install**.
-4. Wait for **"Installation complete"** (about a minute).
-5. **Restart the display:** hold the **PWR** button for **8 seconds** until the
+3. Open **Google Chrome** or **Microsoft Edge** (other browsers can't do this)
+   and go to **<https://espressif.github.io/esptool-js/>**.
+4. Under **Program**, click **Connect**. Pick the port that appears (usually
+   *"USB JTAG/serial debug unit"*) and click **Connect** again.
+5. In the file row, leave **Flash Address** as **`0x0`**, click **Choose File**
+   and select `openrouter-meter-firmware.bin`.
+6. Click **Program** and wait until the log says it has finished (about a minute).
+7. **Restart the display:** hold the **PWR** button for **8 seconds** until the
    screen goes off, then press PWR **once** briefly to turn it back on.
 
 The display now shows a glowing circle and **"Ready to pair"**. 🎉
