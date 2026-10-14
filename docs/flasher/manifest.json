@@ -1,0 +1,11 @@
+{
+  "name": "OpenRouter Meter",
+  "version": "1.0.0",
+  "new_install_prompt_erase": false,
+  "builds": [
+    {
+      "chipFamily": "ESP32-C6",
+      "parts": [{ "path": "openrouter-meter-firmware.bin", "offset": 0 }]
+    }
+  ]
+}

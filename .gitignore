@@ -1,0 +1,16 @@
+# Build output
+app/target/
+firmware/.pio/
+build-sim/
+firmware/sim-shot.bmp
+firmware/*.bmp
+
+# Logs and local tool output
+*.log
+crates.txt
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,10 @@
+# OpenRouter Meter simulator scenario — one protocol message per line.
+# "after_ms" delays a message relative to the previous one.
+{"m":"cfg","low":500,"bud":200,"scr":0,"dim":0}
+{"m":"models","rows":[["deepseek-v4.1-flash",1085,256],["deepseek-v4-flash",344,43],["gpt-6-astra",188,2374],["deepseek-v4-pro",73,25],["others",274,53]],"rq":1964}
+{"m":"prov","rows":[["streamlake",391,65],["together",362,108],["deepinfra",191,23],["openai",188,2374],["others",832,181]],"rq":1964,"n":31}
+{"m":"tok","p":75468555,"c":1476829,"r":846864,"ca":47900659,"rq":1964,"fr":244,"usd":2751}
+{"m":"keys","rows":[["rynos-os-acceptence",3,8,11,5000,4989,0],["Default key",0,28,55,5000,2531,0]]}
+{"m":"hist","d":[0,2187,184,0,1,103,43,7,0,0,2,25,0,18,9,9,11,17,2,75,1,1,3,8,11,2,1,0,33,3]}
+{"m":"core","bal":746,"cr":3500,"day":3,"mon":161,"s30":2754,"rq30":1964,"yd":33,"yrq":102,"ytk":1184210,"now":1791993600,"h24":1}
+{"m":"core","after_ms":4000,"bal":744,"cr":3500,"day":5,"mon":163,"s30":2756,"rq30":1964,"yd":33,"yrq":102,"ytk":1184210,"now":1791993604,"h24":1}

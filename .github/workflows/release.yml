@@ -1,0 +1,61 @@
+name: Release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install platformio
+      - run: pio run
+        working-directory: firmware
+      - run: cp firmware/.pio/build/meter/firmware.factory.bin openrouter-meter-firmware.bin
+      - uses: actions/upload-artifact@v4
+        with: { name: firmware, path: openrouter-meter-firmware.bin }
+
+  app:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --lib
+        working-directory: app
+      - run: cargo build --release
+        working-directory: app
+      - uses: actions/upload-artifact@v4
+        with: { name: app, path: app/target/release/OpenRouterMeter.exe }
+
+  publish:
+    needs: [firmware, app]
+    runs-on: ubuntu-latest
+    environment: { name: github-pages, url: "${{ steps.pages.outputs.page_url }}" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/OpenRouterMeter.exe
+            dist/openrouter-meter-firmware.bin
+      - name: Web installer site
+        run: |
+          mkdir site
+          cp docs/flasher/* site/
+          cp dist/openrouter-meter-firmware.bin site/
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${GITHUB_REF_NAME#v}\"/" site/manifest.json
+          sed -i "s#__SETUP_URL__#${{ github.server_url }}/${{ github.repository }}/blob/main/SETUP.md#" site/index.html
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: site }
+      - id: pages
+        uses: actions/deploy-pages@v4
